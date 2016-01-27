@@ -28,16 +28,20 @@
   "Executable for bq command location."
   :group 'bq)
 
-(defcustom bq-ls-option ""
-  "Default option for bq ls command."
-  :group 'bq)
-
 (defcustom bq-switch-buffer-function #'switch-to-buffer-other-window
   "Function to change bq output buffer."
   :group 'bq)
 
 (defcustom bq-dataset ""
   "Default dataset for bq."
+  :group 'bq)
+
+(defcustom bq-query-default-flags ""
+  "Default flags for bq query command."
+  :group 'bq)
+
+(defcustom bq-ls-default-flags ""
+  "Default option for bq ls command."
   :group 'bq)
 
 (defvar bq-process)
@@ -72,8 +76,11 @@
                                 " "))))
     cmd))
 
-(defun bq-read-options ()
-  (read-from-minibuffer "Options: "))
+(defun bq-read-global-flags (default)
+  (read-from-minibuffer "Global Flags: ") default)
+
+(defun bq-read-flags (default)
+  (read-from-minibuffer "Command Flags: " default))
 
 (defun bq-read-dataset ()
   (read-from-minibuffer "Dataset: "
@@ -82,57 +89,117 @@
 (defun bq-read-table ()
   (read-from-minibuffer "Table: "))
 
+(cl-defmacro bq-let-flags ((&optional (cmd-option nil)
+                                      (global-option nil))
+                           &body body)
+  `(let ((global-flags (bq-read-global-flags ,global-option))
+         (flags (bq-read-flags ,cmd-option)))
+     ,@body))
+
+;;;###autoload
 (defun bq-help ()
   (interactive)
-  (let* ((options (bq-read-options))
+  (let* ((flags (bq-read-flags nil))
          (cmd (bq-compose-command "help"
-                                  options)))
+                                  flags)))
     (bq-process-start cmd)))
 
+;;;###autoload
 (defun bq-ls ()
   (interactive)
-  (let* ((options (bq-read-options))
-         (dataset (bq-read-dataset))
-         (cmd (bq-compose-command "ls"
-                                  bq-ls-option
-                                  options
-                                  dataset)))
-    (bq-process-start cmd)))
+  (bq-let-flags
+   (bq-ls-default-flags)
+   (let* ((dataset (bq-read-dataset))
+          (cmd (bq-compose-command "ls"
+                                   flags
+                                   dataset)))
+     (bq-process-start cmd))))
 
 (defun bq--query (query)
-  (let* ((options (bq-read-options))
-         (cmd (bq-compose-command "query"
-                                  query)))
-    (bq-process-start cmd)))
+  (bq-let-flags
+   (bq-query-default-flags)
+   (let* ((cmd (bq-compose-command global-flags
+                                   "query"
+                                   flags
+                                   query)))
+     (bq-process-start cmd))))
 
+;;;###autoload
 (defun bq-query ()
   (interactive)
-  (let* ((options (bq-read-options))
-         (query (read-from-minibuffer "Query: "))
-         (cmd (bq-compose-command "query"
-                                  query)))
-    (bq-process-start cmd)))
+  (let* ((query (read-from-minibuffer "Query: ")))
+    (bq--query query)))
 
-(defun bq-qurery-from-region (beg end)
+;;;###autoload
+(defun bq-query-from-region (beg end)
   (interactive "r")
   (let* ((query (buffer-substring-no-properties beg end)))
     (bq--query query)))
 
+;;;###autoload
 (defun bq-rm ()
   (interactive)
-  (let* ((options (bq-read-options))
-         (dataset (bq-read-dataset))
-         (table (bq-read-table))
-         (cmd (bq-compose-command "rm"
-                                  options
-                                  (if table
-                                      (format "%s.%s"
-                                              dataset
-                                              table)
-                                    dataset))))
-    (if (yes-or-no-p (format "Run command \"%s\" ?"
-                             cmd))
-        (bq-process-start cmd))))
+  (bq-let-flags
+   ()
+   (let* ((dataset (bq-read-dataset))
+          (table (bq-read-table))
+          (cmd (bq-compose-command "rm"
+                                   flags
+                                   (if table
+                                       (format "%s.%s"
+                                               dataset
+                                               table)
+                                     dataset))))
+     (if (yes-or-no-p (format "Run command \"%s\" ?"
+                              cmd))
+         (bq-process-start cmd)))))
+
+;;;###autoload
+(defun bq-show ()
+  (interactive)
+  (bq-let-flags
+   ()
+   (let* ((dataset (bq-read-dataset))
+          (table (bq-read-table))
+          (cmd (bq-compose-command "show"
+                                   flags
+                                   (format "%s.%s"
+                                           dataset
+                                           table))))
+     (bq-process-start cmd))))
+
+(defcustom bq-load-default-flags ""
+  "Default flags for bq load command."
+  :group 'bq)
+
+
+;; Examples:
+;; bq load ds.new_tbl ./info.csv ./info_schema.json
+;; bq load ds.new_tbl gs://mybucket/info.csv ./info_schema.json
+;; bq load ds.small gs://mybucket/small.csv name:integer,value:string
+;; bq load ds.small gs://mybucket/small.csv field1,field2,field3
+;;;###autoload
+(defun bq-load ()
+  (interactive)
+  (let ((use-local-file-as-source (yes-or-no-p "Use Local File as Source?")))
+    (bq-let-flags (bq-load-default-flags)
+                  (let* ((dataset (bq-read-dataset))
+                         (table (bq-read-table))
+                         (data (if use-local-file-as-source
+                                   (car (find-file-read-args
+                                         "Select Source File: "
+                                         (confirm-nonexistent-file-or-buffer)))
+                                 (read-from-minibuffer "Source Data URL: ")))
+                         (schema (car (find-file-read-args
+                                       "Select Schema: "
+                                       (confirm-nonexistent-file-or-buffer))))
+                         (cmd (bq-compose-command global-flags
+                                                  "load"
+                                                  flags
+                                                  (format "%s.%s" dataset table)
+                                                  data
+                                                  schema)))
+                    (bq-process-start cmd)))))
 
 
 ;; (find-file-read-args
