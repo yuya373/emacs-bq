@@ -40,6 +40,10 @@
   "Default flags for bq query command."
   :group 'bq)
 
+(defcustom bq-query-default-global-flags ""
+  "Default global flags for bq query command."
+  :group 'bq)
+
 (defcustom bq-ls-default-flags ""
   "Default option for bq ls command."
   :group 'bq)
@@ -58,14 +62,15 @@
     buf))
 
 (defun bq-process-start (cmd)
-  (message "%s" cmd)
-  (let* ((buf (bq-get-buffer-create))
-         (process (start-process-shell-command "bq"
-                                               buf
-                                               cmd)))
-    (setq bq-process process)
-    (funcall bq-switch-buffer-function
-             (process-buffer process))))
+  (let ((buf (bq-get-buffer-create)))
+    (with-current-buffer buf
+      (goto-char (point-min))
+      (insert (format "Executing: %s" cmd))
+      (goto-char (point-max)))
+    (let ((process (start-process-shell-command "bq" buf cmd)))
+      (setq bq-process process)
+      (funcall bq-switch-buffer-function
+               (process-buffer process)))))
 
 (defun bq-compose-command (&rest args)
   (let ((cmd (format "%s %s"
@@ -77,7 +82,7 @@
     cmd))
 
 (defun bq-read-global-flags (default)
-  (read-from-minibuffer "Global Flags: ") default)
+  (read-from-minibuffer "Global Flags: " default))
 
 (defun bq-read-flags (default)
   (read-from-minibuffer "Command Flags: " default))
@@ -89,11 +94,11 @@
 (defun bq-read-table ()
   (read-from-minibuffer "Table: "))
 
-(cl-defmacro bq-let-flags ((&optional (cmd-option nil)
-                                      (global-option nil))
+(cl-defmacro bq-let-flags ((&optional (cmd-flags nil)
+                                      (global-flags nil))
                            &body body)
-  `(let ((global-flags (bq-read-global-flags ,global-option))
-         (flags (bq-read-flags ,cmd-option)))
+  `(let ((global-flags (bq-read-global-flags ,global-flags))
+         (flags (bq-read-flags ,cmd-flags)))
      ,@body))
 
 ;;;###autoload
@@ -117,7 +122,7 @@
 
 (defun bq--query (query)
   (bq-let-flags
-   (bq-query-default-flags)
+   (bq-query-default-flags bq-query-default-global-flags)
    (let* ((cmd (bq-compose-command global-flags
                                    "query"
                                    flags
